@@ -21,3 +21,18 @@ Since it depends on AppleScript, it's only compatible with MacOS. and I've only 
     }
 }
 ```
+
+## Testing
+
+To view logs (when connected to Claude Desktop):
+
+```bash
+tail -n 20 -F ~/Library/Logs/Claude/mcp*.log
+```
+
+Test this MCP server interactively with [inspector](https://github.com/modelcontextprotocol/inspector):
+
+```bash
+npx @modelcontextprotocol/inspector -- uv run illustrator
+```
+

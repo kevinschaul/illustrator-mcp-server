@@ -1,5 +1,6 @@
 import subprocess
 import tempfile
+import sys
 import os
 import asyncio
 import mcp.types as types
@@ -19,7 +20,7 @@ async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="view",
-            description="View a screenshot of the Adobe Ullustrator window",
+            description="View a screenshot of the Adobe Illustrator window",
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -33,7 +34,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "code": {
                         "type": "string",
-                        "description": "ExtendScript/JavaScript code to execute in Illustrator. It will run on the current document. you only need to make the document once",
+                        "description": "ExtendScript/JavaScript code to execute",
                     }
                 },
                 "required": ["code"],
@@ -45,36 +46,98 @@ async def handle_list_tools() -> list[types.Tool]:
 def captureIllustrator() -> list[types.TextContent | types.ImageContent]:
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         screenshot_path = f.name
-
     try:
-        activate_script = """
-            tell application "Adobe Illustrator" to activate
-            delay 1
-            tell application "Claude" to activate
-        """
-        subprocess.run(["osascript", "-e", activate_script])
+        capture_script = (
+            """
+            -- Save the current active application
+            tell application "System Events"
+                set frontApp to name of first process where frontmost is true
+            end tell
 
-        result = subprocess.run(
-            [
-                "screencapture",
-                "-R",
-                "0,0,960,1080",
-                "-C",
-                "-T",
-                "2",
-                "-x",
-                screenshot_path,
-            ]
+            -- Activate Illustrator and wait for it to come to front
+            tell application "Adobe Illustrator"
+                activate
+                delay 1.5
+            end tell
+
+            -- Get window position and dimensions
+            tell application "System Events"
+                tell process "Adobe Illustrator"
+                    try
+                        set frontWindow to first window
+                        set {x, y} to position of frontWindow
+                        set {width, height} to size of frontWindow
+
+                        -- Format coordinates for screencapture
+                        set windowInfo to "" & x & "," & y & "," & width & "," & height
+
+                        -- Take the screenshot directly from AppleScript while Illustrator is frontmost
+                        do shell script "screencapture -R " & quoted form of windowInfo & " -x '" & "%s" & "'"
+
+                        -- Return coordinates for verification
+                        set captureResult to "SUCCESS:" & windowInfo
+                    on error errMsg
+                        set captureResult to "ERROR: " & errMsg
+                    end try
+                end tell
+            end tell
+
+            -- Return to the previous application if it wasn't Illustrator
+            if frontApp is not "Adobe Illustrator" then
+                tell application frontApp
+                    activate
+                end tell
+            end if
+
+            return captureResult
+        """
+            % screenshot_path
         )
 
-        if result.returncode != 0:
-            return [types.TextContent(type="text", text="Failed to capture screenshot")]
+        capture_result = subprocess.run(
+            ["osascript", "-e", capture_script], capture_output=True, text=True
+        )
+
+        if capture_result.returncode != 0:
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Failed to capture Illustrator window: {capture_result.stderr}",
+                )
+            ]
+
+        result_info = capture_result.stdout.strip()
+
+        # Check if there was an error message in the AppleScript output
+        if result_info.startswith("ERROR:"):
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Failed to capture Illustrator: {result_info}",
+                )
+            ]
+
+        # Extract the window coordinates from the SUCCESS message
+        if result_info.startswith("SUCCESS:"):
+            window_info = result_info.replace("SUCCESS:", "")
+            print(f"Captured Illustrator window: {window_info}", file=sys.stderr)
+        else:
+            print(f"Unexpected result from AppleScript: {result_info}", file=sys.stderr)
+
+        # Make sure the screenshot file exists and has content
+        if not os.path.exists(screenshot_path) or os.path.getsize(screenshot_path) == 0:
+            return [
+                types.TextContent(
+                    type="text",
+                    text="Screenshot file was not created or is empty",
+                )
+            ]
 
         with Image.open(screenshot_path) as img:
             if img.mode in ("RGBA", "LA"):
                 img = img.convert("RGB")
             buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=50, optimize=True)
+            img.save(buffer, format="JPEG", quality=85, optimize=True)
             compressed_data = buffer.getvalue()
             screenshot_data = base64.b64encode(compressed_data).decode("utf-8")
 
@@ -85,7 +148,14 @@ def captureIllustrator() -> list[types.TextContent | types.ImageContent]:
                 data=screenshot_data,
             )
         ]
-
+    except Exception as e:
+        # Catch any other exceptions
+        return [
+            types.TextContent(
+                type="text",
+                text=f"Exception while capturing Illustrator window: {str(e)}",
+            )
+        ]
     finally:
         if os.path.exists(screenshot_path):
             os.unlink(screenshot_path)

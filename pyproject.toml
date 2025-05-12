@@ -1,10 +1,7 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
 name = "illustrator"
 version = "0.1.0"
+requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.28.1",
     "mcp>=1.1.1",
@@ -13,3 +10,17 @@ dependencies = [
 
 [project.scripts]
 illustrator = "illustrator:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# [tool.uv]
+# dev-dependencies = ["pytest>=8.0.0"]
+#
+# [tool.pytest.ini_options]
+# testpaths = ["tests"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
