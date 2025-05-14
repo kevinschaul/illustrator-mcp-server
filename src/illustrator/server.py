@@ -1,6 +1,5 @@
 import subprocess
 import tempfile
-import sys
 import os
 import asyncio
 import mcp.types as types
@@ -48,34 +47,14 @@ def captureIllustrator() -> types.CallToolResult:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             screenshot_path = f.name
 
-        # Check if Illustrator is running
-        check_result = subprocess.run(
-            [
-                "osascript",
-                "-e",
-                'tell application "System Events" to count (processes whose name is "Adobe Illustrator")',
-            ],
-            capture_output=True,
-            text=True,
-        )
-
-        if check_result.returncode != 0 or check_result.stdout.strip() == "0":
-            return types.CallToolResult(
-                content=[
-                    types.TextContent(
-                        type="text", text="Error: Adobe Illustrator is not running."
-                    )
-                ],
-                isError=True,
-            )
-
-        # Capture the Illustrator window
         capture_script = (
             """
+            -- Save the previously active app so we can restore it later
             tell application "System Events"
                 set frontApp to name of first process where frontmost is true
             end tell
 
+            -- Bring Illustrator to the front
             tell application "Adobe Illustrator"
                 activate
                 delay 1
@@ -83,14 +62,18 @@ def captureIllustrator() -> types.CallToolResult:
 
             tell application "System Events"
                 tell process "Adobe Illustrator"
+                    -- Get the screen coordinates
                     set frontWindow to first window
                     set {x, y} to position of frontWindow
                     set {width, height} to size of frontWindow
                     set windowInfo to "" & x & "," & y & "," & width & "," & height
+
+                    -- Take the screenshot of those coordinates
                     do shell script "screencapture -R " & quoted form of windowInfo & " -x '%s'"
                 end tell
             end tell
 
+            -- Re-activate the previously active app
             tell application frontApp
                 activate
             end tell
@@ -100,7 +83,6 @@ def captureIllustrator() -> types.CallToolResult:
 
         subprocess.run(["osascript", "-e", capture_script], check=True)
 
-        # Process the image
         with Image.open(screenshot_path) as img:
             if img.mode in ("RGBA", "LA"):
                 img = img.convert("RGB")
@@ -125,35 +107,11 @@ def captureIllustrator() -> types.CallToolResult:
         )
     finally:
         if screenshot_path and os.path.exists(screenshot_path):
-            try:
-                os.unlink(screenshot_path)
-            except Exception:
-                pass
+            os.unlink(screenshot_path)
 
 
 def runIllustratorScript(code: str) -> types.CallToolResult:
     try:
-        # Check if Illustrator is running
-        check_result = subprocess.run(
-            [
-                "osascript",
-                "-e",
-                'tell application "System Events" to count (processes whose name is "Adobe Illustrator")',
-            ],
-            capture_output=True,
-            text=True,
-        )
-
-        if check_result.returncode != 0 or check_result.stdout.strip() == "0":
-            return types.CallToolResult(
-                content=[
-                    types.TextContent(
-                        type="text", text="Error: Adobe Illustrator is not running."
-                    )
-                ],
-                isError=True,
-            )
-
         # Escape script for AppleScript
         script = code.replace('"', '\\"').replace("\n", "\\n")
 
@@ -202,7 +160,7 @@ def runIllustratorScript(code: str) -> types.CallToolResult:
 @server.call_tool()
 async def handleCallTool(
     name: str, arguments: dict | None
-) -> list[types.TextContent | types.ImageContent]:
+) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     if name == "view":
         result = captureIllustrator()
         return result.content
