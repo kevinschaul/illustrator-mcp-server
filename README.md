@@ -1,4 +1,7 @@
 # Illustrator MCP Server
+
+_Forked from [@spencerhhuberg/illustrator-mcp-server](https://github.com/spencerhhubert/illustrator-mcp-server)_
+
 Adobe Illustrator is compatible with JavaScript. In fact, some super big stuff you need to programmatically generate with these scripts. Bots are good at JavaScript.
 
 This MCP server let's bots send scripts straight to Illustrator and look at the result.
@@ -35,4 +38,3 @@ Test this MCP server interactively with [inspector](https://github.com/modelcont
 ```bash
 npx @modelcontextprotocol/inspector -- uv run illustrator
 ```
-
