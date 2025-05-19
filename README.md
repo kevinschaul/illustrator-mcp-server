@@ -38,3 +38,9 @@ Test this MCP server interactively with [inspector](https://github.com/modelcont
 ```bash
 npx @modelcontextprotocol/inspector -- uv run illustrator
 ```
+
+Run some code in Illustrator with:
+
+```bash
+npx @modelcontextprotocol/inspector --cli uv run illustrator --method tools/call --tool-name run --tool-arg code='log("hi")'
+```

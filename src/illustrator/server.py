@@ -13,6 +13,15 @@ import io
 server = Server("illustrator")
 
 
+RUN_DESCRIPTION = """
+Run ExtendScript code in Illustrator.
+
+DO NOT call `alert()` or `$.writeln()` for debugging.
+
+Instead, call `log(message)` each time you want to log a message. I have already defined `log()` for you and will pass in to Illustrator along with the code you provide. All calls to `log()` will be returned in the output.
+"""
+
+
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     return [
@@ -26,7 +35,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="run",
-            description="Run ExtendScript code in Illustrator",
+            description=RUN_DESCRIPTION,
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -112,13 +121,31 @@ def captureIllustrator() -> types.CallToolResult:
 
 def runIllustratorScript(code: str) -> types.CallToolResult:
     try:
-        # Escape script for AppleScript
-        script = code.replace('"', '\\"').replace("\n", "\\n")
+        wrapped_code = f"""
+        var __alert_output = [];
+        var log = function(message) {{
+            __alert_output.push(message);
+        }};
+
+        // TODO why doesn't this work?
+        app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS
+
+        {code}
+
+        // The last line becomes the return value to AppleScript
+        __alert_output.join("\\\n");
+        """
+
+        # Write it to a temporary file
+        with tempfile.NamedTemporaryFile(suffix=".jsx", delete=False) as tmp_file:
+            tmp_file_path = tmp_file.name
+            tmp_file.write(wrapped_code.encode("utf-8"))
 
         applescript = f"""
             tell application "Adobe Illustrator"
+                set user interaction level to never interact
                 try
-                    set result to do javascript "{script}"
+                    set result to do javascript file "{tmp_file_path}"
                     return result
                 on error errMsg
                     return "ERROR: " & errMsg
@@ -130,6 +157,9 @@ def runIllustratorScript(code: str) -> types.CallToolResult:
             ["osascript", "-e", applescript], capture_output=True, text=True
         )
         output = result.stdout.strip()
+
+        # Clean up the temporary file
+        os.unlink(tmp_file_path)
 
         if output.startswith("ERROR:"):
             return types.CallToolResult(
