@@ -1,3 +1,4 @@
+import logging
 import subprocess
 import tempfile
 import os
@@ -9,6 +10,14 @@ import mcp.server.stdio
 import base64
 from PIL import Image
 import io
+
+logger = logging.getLogger("illustrator_mcp")
+current_dir = os.path.dirname(os.path.abspath(__file__))
+logging.basicConfig(
+    filename=os.path.join(current_dir, "..", "..", "illustrator_mcp_server.log"),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.DEBUG,
+)
 
 server = Server("illustrator")
 
@@ -50,47 +59,64 @@ async def handle_list_tools() -> list[types.Tool]:
     ]
 
 
+def _runInIllustrator(code: str) -> str:
+    """Run some ExtendScript in Illustrator"""
+    with tempfile.NamedTemporaryFile(suffix=".jsx", delete=False) as tmp_file:
+        tmp_file_path = tmp_file.name
+        tmp_file.write(code.encode("utf-8"))
+
+    applescript = f"""
+        tell application "Adobe Illustrator"
+            set user interaction level to never interact
+            try
+                set result to do javascript file "{tmp_file_path}"
+                return result
+            on error errMsg
+                return "ERROR: " & errMsg
+            end try
+        end tell
+    """
+
+    result = subprocess.run(
+        ["osascript", "-e", applescript], capture_output=True, text=True
+    )
+    output = result.stdout.strip()
+
+    # Clean up the temporary file
+    os.unlink(tmp_file_path)
+
+    return output
+
+
 def captureIllustrator() -> types.CallToolResult:
     screenshot_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             screenshot_path = f.name
 
-        capture_script = (
-            """
-            -- Save the previously active app so we can restore it later
-            tell application "System Events"
-                set frontApp to name of first process where frontmost is true
-            end tell
-
-            -- Bring Illustrator to the front
-            tell application "Adobe Illustrator"
-                activate
-                delay 1
-            end tell
-
-            tell application "System Events"
-                tell process "Adobe Illustrator"
-                    -- Get the screen coordinates
-                    set frontWindow to first window
-                    set {x, y} to position of frontWindow
-                    set {width, height} to size of frontWindow
-                    set windowInfo to "" & x & "," & y & "," & width & "," & height
-
-                    -- Take the screenshot of those coordinates
-                    do shell script "screencapture -R " & quoted form of windowInfo & " -x '%s'"
-                end tell
-            end tell
-
-            -- Re-activate the previously active app
-            tell application frontApp
-                activate
-            end tell
+        code = """
+        if (app.documents.length === 0) {
+            throw new Error("No active document found");
+        }
+        
+        var doc = app.activeDocument;
+        
+        // Set up PNG export options for extended bounds
+        var exportOptions = new ExportOptionsPNG24();
+        exportOptions.resolution = 150; // Good quality for screenshot purposes
+        exportOptions.antiAliasing = true;
+        exportOptions.transparency = true;
+        exportOptions.artBoardClipping = false; // This captures extended bounds (all objects)
+        exportOptions.horizontalScale = 100;
+        exportOptions.verticalScale = 100;
+        
+        // Export the document with extended bounds
+        var file = {screenshot_path}
+        doc.exportFile(file, ExportType.PNG24, exportOptions);
         """
-            % screenshot_path
-        )
 
-        subprocess.run(["osascript", "-e", capture_script], check=True)
+        output = _runInIllustrator(code)
+        # TODO check output for error
 
         with Image.open(screenshot_path) as img:
             if img.mode in ("RGBA", "LA"):
@@ -136,30 +162,7 @@ def runIllustratorScript(code: str) -> types.CallToolResult:
         __alert_output.join("\\\n");
         """
 
-        # Write it to a temporary file
-        with tempfile.NamedTemporaryFile(suffix=".jsx", delete=False) as tmp_file:
-            tmp_file_path = tmp_file.name
-            tmp_file.write(wrapped_code.encode("utf-8"))
-
-        applescript = f"""
-            tell application "Adobe Illustrator"
-                set user interaction level to never interact
-                try
-                    set result to do javascript file "{tmp_file_path}"
-                    return result
-                on error errMsg
-                    return "ERROR: " & errMsg
-                end try
-            end tell
-        """
-
-        result = subprocess.run(
-            ["osascript", "-e", applescript], capture_output=True, text=True
-        )
-        output = result.stdout.strip()
-
-        # Clean up the temporary file
-        os.unlink(tmp_file_path)
+        output = _runInIllustrator(wrapped_code)
 
         if output.startswith("ERROR:"):
             return types.CallToolResult(
